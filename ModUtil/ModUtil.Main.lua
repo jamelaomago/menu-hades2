@@ -1,22 +1,10 @@
+---@meta _
+---@diagnostic disable
+
 --[[
     ModUtil Main
     Components of ModUtil that depend on loading after Main.lua
 ]]
-
--- Management
-
-local function setSaveIgnore(key, ignore)
-	if SaveIgnores then
-		SaveIgnores[key] = ignore
-	elseif GlobalSaveWhitelist then
-		GlobalSaveWhitelist[key] = not ignore
-	end
-end
-
-setSaveIgnore( "ModUtil", true )
-
-rawset( _ENV, "GLOBALS", ModUtil.Internal._G )
-setSaveIgnore( "GLOBALS", true )
 
 -- Global Interception
 
@@ -26,6 +14,12 @@ setSaveIgnore( "GLOBALS", true )
 --]]
 
 local callableCandidateTypes = ModUtil.Internal.callableCandidateTypes
+local setSaveIgnore = ModUtil.Internal.setSaveIgnore
+
+setSaveIgnore( "ModUtil", true )
+
+rawset( _ENV, "GLOBALS", ModUtil.Internal._ENV_ORIGINAL )
+setSaveIgnore( "GLOBALS", true )
 
 local function isPath( path )
 	return path:find("[.]") 
@@ -44,57 +38,70 @@ local function routeKey( self, key )
 	end
 end
 
-do 
-
+local function extendGlobalEnvironment()
 	local meta = getmetatable( _ENV ) or { }
-	if meta.__index then
+	local mi = meta.__index
+	local mit = type(mi)
+	if mit == "function" then
 		meta.__index = ModUtil.Wrap( meta.__index, function( base, self, key )
 			local value = base( self, key )
 			if value ~= nil then return value end
 			return routeKey( self, key )
 		end, ModUtil )
+	elseif mit == "table" then
+		meta.__index = function( self, key )
+			local value = mi[key]
+			if value ~= nil then return value end
+			return routeKey( self, key )
+		end
 	else
 		meta.__index = routeKey
 	end
 
 	setmetatable( _ENV, meta )
+end
 
+-- Load Trigger Queue
+
+local funcsToLoad = { }
+local loadedOnce = false
+
+local function loadFuncs( triggerArgs )
+	loadedOnce = true
+	for _, v in pairs( funcsToLoad ) do
+		v( triggerArgs )
+	end
+	funcsToLoad = { }
+end
+---@diagnostic disable-next-line: undefined-global
+if OnAnyLoad then
+	---@diagnostic disable-next-line: undefined-global
+	OnAnyLoad{ loadFuncs }
 end
 
 --[[
-	Create a namespace that can be used for the mod's functions
-	and data, and ensure that it doesn't end up in save files.
+	Run the provided function once on the next in-game load.
 
-	modName - the name of the mod
-	parent	- the parent mod, or nil if this mod stands alone
+	triggerFunction - the function to run
 --]]
-function ModUtil.Mod.Register( first, second, meta )
-	local modName, parent
-	if type( first ) == "string" then
-		modName, parent = first, second
-	else
-		modName, parent = second, first
-	end
-	if not parent then
-		parent = _G
-		setSaveIgnore( modName, true )
-	end
-	local mod = parent[ modName ] or { }
-	parent[ modName ] = mod
-	local path = ModUtil.Identifiers.Data[ parent ]
-	if path ~= nil then
-		path = path .. '.'
-	else
-		path = ''
-	end
-	path = path .. modName
-	ModUtil.Mods.Data[ path ] = mod
-	ModUtil.Identifiers.Inverse[ path ] = mod
-	if meta == false then
-		return mod
-	end
-	return setmetatable( mod, ModUtil.Metatables.Mod )
+function ModUtil.LoadOnce( triggerFunction )
+	table.insert( funcsToLoad, triggerFunction )
 end
+
+--[[
+	Cancel running the provided function once on the next in-game load.
+
+	triggerFunction - the function to cancel running
+--]]
+function ModUtil.CancelLoadOnce( triggerFunction )
+	for i, v in ipairs( funcsToLoad ) do
+		if v == triggerFunction then
+			table.remove( funcsToLoad, i )
+		end
+	end
+end
+
+-- Mod-Specific Sane Save Data
 
 local objectData = ModUtil.Internal.objectData
 local passByValueTypes = ModUtil.Internal.passByValueTypes
@@ -107,7 +114,7 @@ local function modDataProxy( value, level )
 	end
 	if t == "table" then
 		if getmetatable( value ) then
-			error( "saved data tables cannot have values with metatables", level )
+			error( "saved data tables cannot have values with metatables.", level )
 		end
 		return ModUtil.Entangled.ModData( value )
 	end
@@ -133,7 +140,7 @@ local function modDataPlain( obj, key, value, level )
 				local state
 				state, value = pcall( function( ) return objectData[ value ] end )
 				if not state or type( value ) ~= "table" then
-					error( "saved data tables cannot have values with metatables", level )
+					error( "saved data tables cannot have values with metatables.", level )
 				end
 			end
 			for k, v in pairs( value ) do
@@ -180,48 +187,73 @@ function ModUtil.Entangled.ModData( value )
 	return ModUtil.Proxy( value, ModUtil.Metatables.Entangled.ModData )
 end
 
+local function checkModData( level )
+	if not loadedOnce then
+		error( "saved data is not yet ready to be accessed, wait for the game to load a save.", (level or 1) + 1 )
+	end
+end
+
+local function getModData( level )
+	ModData = ModData or { }
+	setSaveIgnore( "ModData", false )
+	return ModData
+end
+
 ModUtil.Mod.Data = setmetatable( { }, {
-	__call = function( _, mod )
-		ModData = ModData or { }
-		setSaveIgnore( "ModData", false )
+	__call = function( self, mod )
+		if not loadedOnce then
+			return ModUtil.ReferTable( function( )
+				checkModData( 3 )
+				return self( mod )
+			end )
+		end
+		local modData = getModData( )
 		local key = ModUtil.Mods.Inverse[ mod ]
-		local data = ModData[ key ]
+		local data = modData[ key ]
 		if not data then
 			data = { }
-			ModData[ key ] = data
+			modData[ key ] = data
 		end
 		return modDataProxy( data, 2 )
 	end,
 	__index = function( _, key )
-		ModData = ModData or { }
-		return modDataProxy( ModData[ key ], 2 )
+		checkModData( 2 )
+		local modData = getModData( )
+		return modDataProxy( modData[ key ], 2 )
 	end,
 	__newindex = function( _, key, value )
-		ModData = ModData or { }
-		modDataPlain( ModData, key, value, 2 )
+		checkModData( 2 )
+		local modData = getModData( )
+		modDataPlain( modData, key, value, 2 )
 	end,
 	__len = function( )
-		ModData = ModData or { }
+		checkModData( 2 )
+		local modData = getModData( )
 		return #ModData
 	end,
 	__next = function( _, key )
-		ModData = ModData or { }
-		local key = next( ModData, key )
+		checkModData( 2 )
+		local modData = getModData( )
+		local key = next( modData, key )
 		if modDataKey( key, 2 ) ~= nil then
-			return key, modDataProxy( ModData[ key ], 2 )
+			return key, modDataProxy( modData[ key ], 2 )
 		end
 	end,
 	__inext = function( _, idx )
-		ModData = ModData or { }
-		local idx = inext( ModData, idx )
+		checkModData( 2 )
+		local modData = getModData( )
+		local idx = inext( modData, idx )
 		if modDataKey( idx, 2 ) ~= nil then
-			return idx, modDataProxy( ModData[ idx ], 2 )
+			return idx, modDataProxy( modData[ idx ], 2 )
 		end
 	end,
+	---@type fun( t ): any, any?, any?
 	__pairs = function( self )
+		checkModData( 2 )
 		return qrawpairs( self )
 	end,
 	__ipairs = function( self )
+		checkModData( 2 )
 		return qrawipairs( self )
 	end	
 } )
@@ -244,47 +276,14 @@ ModUtil.Metatables.Mod = {
 	end
 }
 
--- Load Trigger Queue
-
-local funcsToLoad = { }
-
-local function loadFuncs( triggerArgs )
-	for _, v in pairs( funcsToLoad ) do
-		v( triggerArgs )
-	end
-	funcsToLoad = { }
-end
-OnAnyLoad{ function( triggerArgs ) loadFuncs( triggerArgs ) end }
-
-
---[[
-	Run the provided function once on the next in-game load.
-
-	triggerFunction - the function to run
---]]
-function ModUtil.LoadOnce( triggerFunction )
-	table.insert( funcsToLoad, triggerFunction )
-end
-
---[[
-	Cancel running the provided function once on the next in-game load.
-
-	triggerFunction - the function to cancel running
---]]
-function ModUtil.CancelLoadOnce( triggerFunction )
-	for i, v in ipairs( funcsToLoad ) do
-		if v == triggerFunction then
-			table.remove( funcsToLoad, i )
-		end
-	end
-end
-
 -- Internal Access
 
 do
 	local ups = ModUtil.UpValues( function( )
-		return _G, funcsToLoad, loadFuncs, isPath, routeKey, callableCandidateTypes, setSaveIgnore,
-			objectData, passByValueTypes, modDataKey, modDataProxy, modDataPlain, relativeTable
+		return _ENV, funcsToLoad, loadFuncs, isPath, routeKey, callableCandidateTypes, setSaveIgnore,
+			objectData, passByValueTypes, modDataKey, modDataProxy, modDataPlain, relativeTable, extendGlobalEnvironment
 	end )
 	ModUtil.Entangled.Union.Add( ModUtil.Internal, ups )
 end
+
+extendGlobalEnvironment()

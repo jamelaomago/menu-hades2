@@ -1,0 +1,13 @@
+{
+  "namespace": "SGG_Modding",
+  "name": "ModUtil",
+  "description": "Utility mod for mod interactions within lua for SGG's games",
+  "version_number": "4.0.1",
+  "dependencies": [
+    "Hell2Modding-Hell2Modding-1.0.22",
+    "SGG_Modding-DemonDaemon-1.0.1",
+    "SGG_Modding-ENVY-1.1.0"
+  ],
+  "website_url": "https://github.com/SGG-Modding/ModUtil",
+  "FullName": "SGG_Modding-ModUtil"
+}

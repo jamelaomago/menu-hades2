@@ -1,21 +1,15 @@
---[[
-Mod: Mod Utility
-Author: MagicGonads
+---@meta _
+---@diagnostic disable
 
-	Library to allow mods to be more compatible and expand capabilities.
-
---]]
-ModUtil = {
-	Mod = { },
-	Args = { },
-	String = { },
-	Table = { },
-	Path = { },
-	Array = { },
-	IndexArray = { },
-	Entangled = { },
-	Metatables = { }
-}
+ModUtil.Mod = { }
+ModUtil.Args = { }
+ModUtil.String = { }
+ModUtil.Table = { }
+ModUtil.Path = { }
+ModUtil.Array = { }
+ModUtil.IndexArray = { }
+ModUtil.Entangled = { }
+ModUtil.Metatables = { }
 
 -- Extended Global Utilities (assuming lua 5.2)
 
@@ -27,6 +21,7 @@ local function getname( )
 end
 
 -- doesn't invoke __index
+---@diagnostic disable-next-line: lowercase-global
 rawnext = next
 local rawnext = rawnext
 
@@ -46,18 +41,23 @@ end
 local next = next
 
 -- truly raw pairs, ignores __next and __pairs
+---@type fun( t ): any, any
+---@diagnostic disable-next-line: lowercase-global
 function rawpairs( t )
-	return rawnext, t, nil
+	return rawnext, t
 end
 
 -- quasi-raw pairs, invokes __next but ignores __pairs
+---@type fun( t ): any, any
+---@diagnostic disable-next-line: lowercase-global
 function qrawpairs( t )
-    return next, t, nil
+    return next, t
 end
 
 local rawget, rawset, rawlen = rawget, rawset, rawlen
 
 -- doesn't invoke __index just like rawnext
+---@diagnostic disable-next-line: lowercase-global
 function rawinext( t, i )
 
 	if type( t ) ~= "table" then
@@ -82,6 +82,7 @@ end
 local rawinext = rawinext
 
 -- invokes __inext
+---@diagnostic disable-next-line: lowercase-global
 function inext( t, i )
 	local m = debug.getmetatable( t )
 	local f = m and rawget(m,'__inext') or rawinext
@@ -91,6 +92,7 @@ end
 local inext = inext
 
 -- truly raw ipairs, ignores __inext and __ipairs
+---@diagnostic disable-next-line: lowercase-global
 function rawipairs( t )
 	return function( self, key )
 		return rawinext( self, key )
@@ -98,6 +100,7 @@ function rawipairs( t )
 end
 
 -- quasi-raw ipairs, invokes __inext but ignores __ipairs
+---@diagnostic disable-next-line: lowercase-global
 function qrawipairs( t )
 	return function( self, key )
 		return inext( self, key )
@@ -105,6 +108,7 @@ function qrawipairs( t )
 end
 
 -- ignore __tostring (not thread safe?)
+---@diagnostic disable-next-line: lowercase-global
 function rawtostring(t)
 	-- https://stackoverflow.com/a/43286713
 	local m = getmetatable( t )
@@ -159,9 +163,18 @@ function setfenv( fn, env )
 	until not name
 end
 
+local rawtable = table
+table = { }
+for k,v in pairs( rawtable ) do
+	table[k] = v
+end
+_ENV.table = table
+
 table.rawinsert = table.insert
 local rawinsert = table.rawinsert
 -- table.insert that respects metamethods
+---@type fun( list, pos, value?: any )
+---@diagnostic disable-next-line: duplicate-set-field
 function table.insert( list, pos, value )
 	local last = #list
 	if value == nil then
@@ -183,6 +196,8 @@ end
 
 table.rawremove = table.remove
 -- table.remove that respects metamethods
+---@type fun( list, pos ): any
+---@diagnostic disable-next-line: duplicate-set-field
 function table.remove( list, pos )
 	local last = #list
 	if pos == nil then
@@ -210,6 +225,8 @@ do
 		return _unpack( t, m, i - 1, t[ i ], ... )
 	end
 	
+	---@type fun( list, i?, j? ): any
+	---@diagnostic disable-next-line: duplicate-set-field
 	function table.unpack( list, i, j )
 		return _unpack( list, i or 1, j or list.n or #list or 1 )
 	end
@@ -220,17 +237,17 @@ table.rawconcat = rawconcat
 -- table.concat that respects metamethods and includes more values
 do
 	local wt = setmetatable( { }, { __mode = 'v' } )
+	---@type fun( tbl, sep?, i?, j? ): string
+	---@diagnostic disable-next-line: duplicate-set-field
 	function table.concat( tbl, sep, i, j )
 		i = i or 1
 		j = j or tbl.n or #tbl
 		if i > j then return "" end
 		sep = sep or ""
-		local t = rawnext( wt ) or { }
-		rawset( wt, 1, t )
 		for k = i, j, 1 do
-			rawset( t, k, tostring( tbl[ k ] ) )
+			rawset( wt, k, tostring( tbl[ k ] ) )
 		end
-		return rawconcat( t, sep, i, j )
+		return rawconcat( wt, sep, i, j )
 	end
 end
 
@@ -271,8 +288,8 @@ end
 
 -- Environment Manipulation
 
-local _ENV_ORIGINAL = _ENV
-local _ENV_REPLACED = _ENV
+local _ENV_ORIGINAL = _G
+local _ENV_REPLACED = _G
 
 local threadEnvironments = setmetatable( { }, { __mode = "k" } )
 
@@ -297,6 +314,7 @@ local function replaceGlobalEnvironment( )
 		__inext = function( _, key )
 			return inext( getEnv( ), key )
 		end,
+		---@type fun( t? ): any, any
 		__pairs = function( )
 			return pairs( getEnv( ) )
 		end,
@@ -310,6 +328,9 @@ local function replaceGlobalEnvironment( )
 		if v == _ENV_ORIGINAL then reg[ i ] = _ENV_REPLACED end
 	end
 	ModUtil.Identifiers.Inverse._ENV = _ENV_REPLACED
+	if ModUtil.Plugin then
+		ModUtil.Plugin.globals = _ENV_REPLACED
+	end
 end
 
 -- Managed Object Data
@@ -329,20 +350,20 @@ ModUtil.Metatables.Proxy = {
 	__newindex = function( self, key, value )
 		objectData[ self ][ key ] = value
 	end,
-	__len = function( self, ...)
+	__len = function( self )
 		return #objectData( self )
 	end,
-	__next = function( self, ... )
-		return next( objectData[ self ], ... )
+	__next = function( self, key )
+		return next( objectData[ self ], key )
 	end,
-	__inext = function( self, ... )
-		return inext( objectData[ self ], ... )
+	__inext = function( self, idx )
+		return inext( objectData[ self ], idx )
 	end,
-	__pairs = function( self, ... )
-		return pairs( objectData[ self ], ... )
+	__pairs = function( self )
+		return pairs( objectData[ self ] )
 	end,
-	__ipairs = function( self, ... )
-		return ipairs( objectData[ self ], ... )
+	__ipairs = function( self )
+		return ipairs( objectData[ self ] )
 	end
 }
 
@@ -357,20 +378,20 @@ ModUtil.Metatables.Raw = {
 	__newindex = function( self, ... )
 		return rawset( objectData[ self ][ "data" ], ... )
 	end,
-	__len = function( self, ...)
-		return rawlen( objectData[ self ][ "data" ], ... )
+	__len = function( self )
+		return rawlen( objectData[ self ][ "data" ] )
 	end,
-	__next = function( self, ... )
-		return rawnext( objectData[ self ][ "data" ], ... )
+	__next = function( self, key )
+		return rawnext( objectData[ self ][ "data" ], key )
 	end,
-	__inext = function( self, ... )
-		return rawinext( objectData[ self ][ "data" ], ... )
+	__inext = function( self, idx )
+		return rawinext( objectData[ self ][ "data" ], idx )
 	end,
-	__pairs = function( self, ... )
-		return rawpairs( objectData[ self ][ "data" ], ... )
+	__pairs = function( self )
+		return rawpairs( objectData[ self ][ "data" ] )
 	end,
 	__ipairs = function( self, ... )
-		return rawipairs( objectData[ self ][ "data" ], ... )
+		return rawipairs( objectData[ self ][ "data" ] )
 	end
 }
 
@@ -528,6 +549,7 @@ local function literalString( str )
 end
 
 ModUtil.ToString = ModUtil.Callable.Set( { }, function( _, o )
+	---@type boolean|string
 	local identifier = o ~= nil and ModUtil.Identifiers.Data[ o ]
 	identifier = identifier and identifier .. ": " or ""
 	return identifier .. ModUtil.ToString.Static( o )
@@ -602,17 +624,18 @@ local function deepLoop( o, limit, dlimit, indent, seen, cond, depth )
 	end
 	local _indent = ''
 	if indent then
-		_indent = { }
+		local __indent = { }
 		for i = 1, depth, 1 do
 			_indent[ i ] = indent
 		end
-		_indent = table.rawconcat( _indent )
+		_indent = table.rawconcat( __indent )
 	end
 	if type( o ) ~= "table" or (seen and seen[ o ]) or (cond and not cond( o )) then
 		return limit, repv( o )
 	end
 	if seen then seen[ o ] = true end
 	local m = getmetatable( o )
+	---@type boolean|string
 	local h = showTableAddrs or ( m and m.__call ) or isNamespace( o )
 	h = ( h and repv( o ) or "" ) .. '{' .. ( indent and '\n' .. _indent .. indent or '' )
 	local out = { }
@@ -682,6 +705,7 @@ end
 
 ModUtil.Print = ModUtil.Callable.Set( { }, function ( _, ... )
 	print( ... )
+	---@diagnostic disable-next-line: undefined-global
 	if DebugPrint then ModUtil.Print.Debug( ... ) end
 	if io then
 		if io.stdout ~= io.output( ) then
@@ -706,6 +730,7 @@ end
 function ModUtil.Print.Debug( ... )
 	local text = ModUtil.String.Join( "\t", ModUtil.Args.Map( tostring, ... ) ):gsub( "\t", "    " )
 	for line in text:gmatch( "([^\n]+)" ) do
+		---@diagnostic disable-next-line: undefined-global
 		DebugPrint{ Text = line }
 	end
 end
@@ -1119,6 +1144,7 @@ end
 
 -- Metaprogramming Shenanigans
 
+---@type table<string,function|boolean?>
 local stackLevelProperty
 stackLevelProperty = {
 	here = function( self )
@@ -1146,6 +1172,7 @@ stackLevelProperty = {
 	end
 }
 
+---@type table<string,function|boolean?>
 local stackLevelFunction = {
 	gethook = function( self, ... )
 		return pusherror( debug.gethook, self.co, ... )
@@ -1346,6 +1373,7 @@ end
 
 local upvaluejoin = debug.upvaluejoin
 
+---@diagnostic disable-next-line: duplicate-set-field
 function debug.upvaluejoin( f1, n1, f2, n2 )
 	upvaluejoin( f1, n1, f2, n2 )
 	setUpValueIdData( debug.upvalueid( f1, n1 ), f2, n2 )
@@ -2125,6 +2153,7 @@ ModUtil.Context.Env = ModUtil.Context( function( info )
 	end
 	info.env = setmetatable( { }, {
 		__index = function( _, key ) return rawget( env, key ) or info.penv[ key ] end,
+		---@diagnostic disable-next-line: redundant-return-value
 		__newindex = function( _, key, val ) return rawset( env, key, val ) end
 	} )
 	info.final = { env }
@@ -2430,8 +2459,105 @@ ModUtil.Metatables.ReferTable = {
 	end
 }
 
-function ModUtil.ReferTable( obtain, ... )
+function ModUtil.ReferTable( obtain )
 	return ModUtil.Proxy( { obtain = obtain }, ModUtil.Metatables.ReferTable )
+end
+
+-- Management
+
+local pendingSaveIgnores = {}
+
+local function setSaveIgnore(key, ignore)
+
+	-- if this is called too early queue it up to be performed later
+	-- may need to be revised to guarantee the queue gets resolved
+	---@diagnostic disable-next-line: undefined-global
+	if SaveIgnores == nil and GlobalSaveWhitelist == nil then
+		pendingSaveIgnores[key] = ignore
+	else
+		for k,v in pairs(pendingSaveIgnores) do
+			pendingSaveIgnores[k] = nil
+			setSaveIgnore(k,v)
+		end
+	end
+	
+	-- Hades 1: saved tables are blacklisted as a lookup
+	---@diagnostic disable-next-line: undefined-global
+	if SaveIgnores ~= nil then
+		---@diagnostic disable-next-line: undefined-global
+		SaveIgnores[key] = ignore
+	end
+	
+	-- Hades 2: saved tables are whitelisted as a list
+	---@diagnostic disable-next-line: undefined-global
+	if GlobalSaveWhitelist ~= nil then 
+		if ignore == false then
+			local found = false
+			---@diagnostic disable-next-line: undefined-global
+			for _,k in ipairs(GlobalSaveWhitelist) do
+				if k == key then
+					found = true
+					break
+				end
+			end
+			if not found then
+				---@diagnostic disable-next-line: undefined-global
+				table.insert(GlobalSaveWhitelist,key)
+			end
+		elseif ignore == true then
+			local found = 0
+			---@diagnostic disable-next-line: undefined-global
+			for i,k in ipairs(GlobalSaveWhitelist) do
+				if k == key then
+					found = i
+					break
+				end
+			end
+			if found > 0 then
+				---@diagnostic disable-next-line: undefined-global
+				table.remove(GlobalSaveWhitelist,found)
+			end
+		end
+	end
+	
+end
+
+--[[
+	Create a namespace that can be used for the mod's functions
+	and data, and ensure that it doesn't end up in save files.
+
+	modName - the name of the mod
+	parent	- the parent mod, or nil if this mod stands alone
+--]]
+function ModUtil.Mod.Register( first, second, meta )
+	local modName, parent
+	if type( first ) == "string" then
+		modName, parent = first, second
+	else
+		modName, parent = second, first
+	end
+	local path
+	if not parent then
+		parent = _G
+		setSaveIgnore( modName, true )
+	else
+		path = ModUtil.Identifiers.Data[ parent ]
+	end
+	local mod = parent[ modName ] or { }
+	parent[ modName ] = mod
+
+	if path ~= nil then
+		path = path .. '.'
+	else
+		path = ''
+	end
+	path = path .. modName
+	ModUtil.Mods.Data[ path ] = mod
+	ModUtil.Identifiers.Inverse[ path ] = mod
+	if meta == false then
+		return mod
+	end
+	return setmetatable( mod, ModUtil.Metatables.Mod )
 end
 
 -- Internal access
@@ -2440,7 +2566,7 @@ ModUtil.Internal = ModUtil.Entangled.Union( )
 
 do
 	local ups = ModUtil.UpValues( function( )
-	return _ENV_ORIGINAL,
+	return _ENV_ORIGINAL, setSaveIgnore,
 		objectData, newObjectData, isInt, deepLoop, repk, repv, showTableAddrs,
 		decorators, overrides, refreshDecorHistory, cloneDecorHistory, cloneDecorNode,
 		threadContexts, threadEnvironments, getEnv, replaceGlobalEnvironment, 
@@ -2451,6 +2577,6 @@ do
 	ModUtil.Entangled.Union.Add( ModUtil.Internal, ups )
 end
 
--- Final Actions
+-- final actions
 
-replaceGlobalEnvironment( )
+replaceGlobalEnvironment()

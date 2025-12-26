@@ -1,0 +1,9 @@
+Load Priority 0
+To "Scripts/Main.lua"
+Top Import "register.lua"
+Top Import "config.lua"
+Top Import "ModUtil.lua"
+Top Import "ModUtil.Extra.lua"
+Import "ModUtil.Main.lua"
+Import "ModUtil.Hades.lua"
+Import "ready.lua"
